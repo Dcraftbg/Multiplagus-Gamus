@@ -162,6 +162,7 @@ void debug_draw_rect(float x, float y, float w, float h, Vec4f color) {
 typedef struct {
     uint32_t id;
     uint32_t color;
+    float target_x, target_y;
     float x, y;
 } Player;
 typedef struct {
@@ -202,8 +203,8 @@ void net_thread(void* ninja) {
             size_t player_idx = lookup_player_idx(packet.as.sc_here.id);
             if(player_idx) {
                 Player* player = &players.items[player_idx];
-                player->x = packet.as.sc_here.x;
-                player->y = packet.as.sc_here.y;
+                player->target_x = packet.as.sc_here.x;
+                player->target_y = packet.as.sc_here.y;
             } else {
                 fprintf(stderr, "Bogus here %d!\n", packet.as.sc_here.id);
             }
@@ -225,6 +226,11 @@ char* shift_args(int *argc, char ***argv) {
     if((*argc) <= 0) return NULL;
     return ((*argc)--, *((*argv)++));
 }
+
+float expDecay(float a, float b, float decay, float deltaTime){
+    return b + (a - b) * expf(-decay*deltaTime);
+}
+
 int main(int argc, char** argv) {
     gtinit();
     shift_args(&argc, &argv);
@@ -299,6 +305,7 @@ int main(int argc, char** argv) {
     da_push(&players, ((Player) { .color = color }));
 
     float our_velocity_x = 0, our_velocity_y = 0;
+    float dt = 1.0 / 60; // TODO: calculate actual dt
     while (RGFW_window_shouldClose(win) == RGFW_FALSE) {
         RGFW_event event;
         while (RGFW_window_checkEvent(win, &event));
@@ -335,6 +342,11 @@ int main(int argc, char** argv) {
         }
         glClearColor(0x21/255.f, 0x21/255.f, 0x21/255.f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+        for(size_t i = 1; i < players.len; ++i) { // interpolating
+            Player* player = &players.items[i];
+            player->x = expDecay(player->x, player->target_x, 200, dt); 
+            player->y = expDecay(player->y, player->target_y, 200, dt); 
+        }
         for(size_t i = 0; i < players.len; ++i) {
             debug_draw_rect(players.items[i].x, players.items[i].y, 32, 32, rgb2vec4f(players.items[i].color));
         }

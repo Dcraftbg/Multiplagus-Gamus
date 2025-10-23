@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
         cmd_append(&cmd, cc);
         da_append_many(&cmd, objs.items, objs.count);
         cmd_append(&cmd, "-o", exe);
-        cmd_append(&cmd, "-lX11", "-lXrandr", "-lGL");
+        cmd_append(&cmd, "-lm","-lX11", "-lXrandr", "-lGL");
         if(!cmd_run_sync_and_reset(&cmd)) return 1;
     }
     if(run) {
