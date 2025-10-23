@@ -344,8 +344,8 @@ int main(int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT);
         for(size_t i = 1; i < players.len; ++i) { // interpolating
             Player* player = &players.items[i];
-            player->x = expDecay(player->x, player->target_x, 200, dt); 
-            player->y = expDecay(player->y, player->target_y, 200, dt); 
+            player->x = expDecay(player->x, player->target_x, 100, dt); 
+            player->y = expDecay(player->y, player->target_y, 100, dt); 
         }
         for(size_t i = 0; i < players.len; ++i) {
             debug_draw_rect(players.items[i].x, players.items[i].y, 32, 32, rgb2vec4f(players.items[i].color));
