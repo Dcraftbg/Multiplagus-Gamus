@@ -196,6 +196,8 @@ void net_thread(void* ninja) {
                 .color = packet.as.sc_joined.color,
                 .x = packet.as.sc_joined.x,
                 .y = packet.as.sc_joined.y,
+                .target_x = packet.as.sc_joined.x,
+                .target_y = packet.as.sc_joined.y,
             };
             da_push(&players, player);
         } break;
@@ -227,7 +229,7 @@ char* shift_args(int *argc, char ***argv) {
     return ((*argc)--, *((*argv)++));
 }
 
-float expDecay(float a, float b, float decay, float deltaTime){
+float exp_decayf(float a, float b, float decay, float deltaTime){
     return b + (a - b) * expf(-decay*deltaTime);
 }
 
@@ -305,8 +307,11 @@ int main(int argc, char** argv) {
     da_push(&players, ((Player) { .color = color }));
 
     float our_velocity_x = 0, our_velocity_y = 0;
-    float dt = 1.0 / 60; // TODO: calculate actual dt
+    uint32_t now = gttime_now_unspec_milis();
     while (RGFW_window_shouldClose(win) == RGFW_FALSE) {
+        uint32_t prev = now;
+        now = gttime_now_unspec_milis();
+        float dt = (now - prev) * .0001f;
         RGFW_event event;
         while (RGFW_window_checkEvent(win, &event));
         int dx = 0, dy = 0;
@@ -344,8 +349,8 @@ int main(int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT);
         for(size_t i = 1; i < players.len; ++i) { // interpolating
             Player* player = &players.items[i];
-            player->x = expDecay(player->x, player->target_x, 100, dt); 
-            player->y = expDecay(player->y, player->target_y, 100, dt); 
+            player->x = exp_decayf(player->x, player->target_x, 1000, dt); 
+            player->y = exp_decayf(player->y, player->target_y, 1000, dt); 
         }
         for(size_t i = 0; i < players.len; ++i) {
             debug_draw_rect(players.items[i].x, players.items[i].y, 32, 32, rgb2vec4f(players.items[i].color));
