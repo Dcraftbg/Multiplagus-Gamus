@@ -3,39 +3,89 @@
 #include <gt.h>
 #include <stdlib.h>
 #include "eprintf.h"
+#include <list_head.h>
+#include <packet.h>
 
 #define PORT 8080
 typedef struct {
+    struct list_head list;
     int fd;
+    uint32_t color;
+    float x, y;
 } Client;
+static struct list_head clients = LIST_HEAD_INIT(clients);
+void send_packet(const Client* client, const Packet* packet) {
+    gtblockfd(client->fd, GTBLOCKOUT);
+    send(client->fd, packet, sizeof(*packet), 0);
+}
+void broadcast(const Client* ignore, const Packet* packet) {
+    list_foreach(client_list, &clients) {
+        Client* client = (Client*)client_list;
+        if(client == ignore) continue;
+        send_packet(client, packet);
+    }
+}
+#define SC_SOMEONE_JOINED(client) \
+    { \
+        .tag = SC_PACKET_SOMEONE_JOINED, \
+        .as.sc_joined = { \
+             .id = (client)->fd, \
+             .color = (client)->color, \
+             .x = (client)->x, \
+             .y = (client)->y \
+        } \
+    }
 void client_thread(void* client_void) {
     Client* client = client_void;
     for(;;) {
-        char buf[128];
+        Packet packet;
         gtblockfd(client->fd, GTBLOCKIN);
-        int n = recv(client->fd, buf, sizeof(buf), 0);
+        int n = recv(client->fd, &packet, sizeof(packet), 0);
         if(n < 0) eprintfln("ERROR:%d: when receiving: %s", client->fd, sneterr());
         if(n <= 0) break;
-        eprintfln("INFO:%d: %.*s", client->fd, n, buf);
-        gtblockfd(client->fd, GTBLOCKOUT);
-        send(client->fd, buf, n, 0);
+
+        switch(packet.tag) {
+        case CS_PACKET_HELLO:
+            list_foreach(other_client_list, &clients) {
+                Client* other_client = (Client*)other_client_list;
+                send_packet(client, &(Packet) SC_SOMEONE_JOINED(other_client));
+            }
+            list_init(&client->list);
+            list_append(&clients, &client->list);
+            client->color = packet.as.cs_hello.color;
+            eprintfln("INFO:%d: Hello", client->fd);
+            broadcast(client, &(Packet) SC_SOMEONE_JOINED(client));
+            break;
+        case CS_PACKET_IM_HERE:
+            client->x = packet.as.cs_here.x;
+            client->y = packet.as.cs_here.y;
+            eprintfln("INFO:%d: Here %f %f", client->fd, client->x, client->y);
+            broadcast(client, &(Packet) {
+                .tag = SC_PACKET_SOMEONE_HERE,
+                .as.sc_here = {
+                    .id = client->fd,
+                    .x = client->x,
+                    .y = client->y
+                }
+            });
+            break;
+        default:
+            eprintfln("INFO:%d: Bogus Amogus", client->fd);
+        }
     }
+    broadcast(client, &(Packet) {
+        .tag = SC_PACKET_SOMEONE_LEFT,
+        .as.sc_left = {
+            .id = client->fd
+        }
+    });
     eprintfln("INFO:%d: Closing", client->fd);
     closesocket(client->fd);
+    list_remove(&client->list);
     free(client);
-}
-void printer_thread(void* arg0) {
-    unsigned long secs = (unsigned long) arg0;
-    for(;;) {
-        eprintfln("Printed every %lu seconds!", secs);
-        gtsleep(secs * 1000);
-    }
 }
 int main(void) {
     gtinit();
-    gtgo(printer_thread, (void*)(unsigned long)1);
-    gtgo(printer_thread, (void*)(unsigned long)10);
-#if 1
     int server = socket(AF_INET, SOCK_STREAM, 0);
     if(server < 0) {
         eprintfln("FATAL: Could not create server socket: %s", sneterr());
@@ -77,5 +127,4 @@ int main(void) {
         gtgo(client_thread, client);
     }
     return 0;
-#endif
 }

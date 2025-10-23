@@ -75,12 +75,13 @@ int main(int argc, char** argv) {
         da_append(&objs, out);
         if(!c_needs_rebuild1(&stb, &pathb, out, src)) continue;
         cmd_append(&cmd, cc,
-            "-Wall", "-Wextra", "-Wno-missing-braces",
+            "-Wall", "-Wextra", 
+            "-Wno-unused-function", "-Wno-missing-braces",
             "-g",
             "-O0",  
             "-MMD", "-MP",
             "-c", src, "-o", out,
-            "-Ivendor"
+            "-Ivendor", "-I../shared"
         );
         if(!cmd_run_sync_and_reset(&cmd)) {  
             char* str = temp_strdup(out);  

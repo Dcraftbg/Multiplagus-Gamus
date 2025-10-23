@@ -29,3 +29,5 @@
         (da)->items[(index)] = (value);\
         (da)->len++;\
    } while(0)
+
+#define da_remove_unordered(da, i) ((da)->items[i] = (da)->items[--(da)->len])

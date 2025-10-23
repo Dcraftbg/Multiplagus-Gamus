@@ -34,11 +34,9 @@ int main(int argc, char** argv) {
             { &dirs, .file_type = FILE_DIRECTORY },
             { &gen_sources, .ext = ".gen.c" },
             { &c_sources, .ext = ".c" },
-       ) ||
-       !walk_directory("vendor",
-            { &dirs, .file_type = FILE_DIRECTORY },
-            { &c_sources, .ext = ".c" },
-        )) return 1;
+       )) return 1;
+    da_append(&c_sources, "vendor/vendor.c");
+    da_append(&c_sources, "vendor/RGFW.c");
     File_Paths objs = { 0 };
     String_Builder stb = { 0 };
     File_Paths pathb = { 0 };
@@ -82,7 +80,9 @@ int main(int argc, char** argv) {
             "-g",
             "-O1",  
             "-MMD", "-MP",
-            "-c", src, "-o", out, "-Ivendor", "-DRGFWDEF=", "-DRGFW_OPENGL"
+            "-c", src, "-o", out, 
+            "-Ivendor", "-I../shared",
+            "-DRGFWDEF=", "-DRGFW_OPENGL"
         );
         if(!cmd_run_sync_and_reset(&cmd)) {  
             char* str = temp_strdup(out);  
