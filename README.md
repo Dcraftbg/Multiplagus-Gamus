@@ -1,6 +1,6 @@
 # Bogus Amogus Multiplagus Gamus
 
-Quickstart:
+Quickstagus:
 ```c
 cc nob.c -o nob
 ./nob client run
