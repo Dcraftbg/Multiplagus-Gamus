@@ -38,7 +38,7 @@ int main(int argc, char** argv) {
             { &gen_sources, .ext = ".gen.c" },
             { &c_sources, .ext = ".c" },
        )) return 1;
-    da_append(&c_sources, "vendor/vendor.c");
+    da_append(&c_sources, "vendor/vendor_networking.c");
     da_append(&c_sources, "vendor/RGFW.c");
     if(wayland) {
         Nob_File_Paths wayland_folder = {0}; // MEMORY leak but idc since nob lives for a short time
@@ -55,6 +55,7 @@ int main(int argc, char** argv) {
             if(sv_end_with(sv,".c")) da_append(&c_sources, temp_sprintf("wayland/%s", wayland_folder.items[i]));
         }
     }
+    da_append(&c_sources, "vendor/stb_image.c");
     File_Paths objs = { 0 };
     String_Builder stb = { 0 };
     File_Paths pathb = { 0 };
@@ -66,8 +67,12 @@ int main(int argc, char** argv) {
     }
     for(size_t i = 0; i < gen_sources.count; ++i) {
         const char* src = gen_sources.items[i];
-        const char* out = temp_sprintf("%s/client/%.*s", bindir, cstr_rem_suffix(path_skip_one(dirs.items[i]), ".c"));
+        const char* out = temp_sprintf("%s/client/%.*s", bindir, cstr_rem_suffix(path_skip_one(src), ".c"));
         const char* gen_file = temp_sprintf("%.*s", cstr_rem_suffix(src, ".gen.c"));
+        // TODO: match Walk Dir Entry function
+        if(sv_end_with(sv_from_cstr(gen_file), ".c")) {
+            da_append(&c_sources, gen_file);
+        }
         bool needs_rebuild = needs_rebuild1(gen_file, src);
         if(c_needs_rebuild1(&stb, &pathb, out, src)) {
             cmd_append(&cmd, NOB_REBUILD_URSELF(out, src), "-O1", "-MMD");
@@ -79,6 +84,7 @@ int main(int argc, char** argv) {
         Fd fd = fd_open_for_write(gen_file);
         if(fd == -NOB_INVALID_FD) {
             nob_log(NOB_ERROR, "Failed to open %s", gen_file);
+            return 1;
         }
         cmd_append(&cmd, out);
         // TODO: run in that directory

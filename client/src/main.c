@@ -7,6 +7,10 @@
 #include <gt.h>
 #include <packet.h>
 #include <math.h>
+#include <stb_image.h>
+#include "debug_draw.h"
+#include "color.h"
+#include "vao.h"
 
 #define W_RATIO 16
 #define H_RATIO 9
@@ -14,59 +18,6 @@
 #define WIDTH (W_RATIO*SCALE)
 #define HEIGHT (H_RATIO*SCALE)
 
-typedef union {
-    struct {
-        float r, g, b, a;
-    };
-    struct {
-        float x, y, z, w;
-    };
-    float f[4];
-} Vec4f;
-// ARGB
-typedef unsigned int Color;
-#define COLOR_GET_A(c) (((c) >> 24) & 0xFF)
-#define COLOR_GET_R(c) (((c) >> 16) & 0xFF)
-#define COLOR_GET_G(c) (((c) >>  8) & 0xFF)
-#define COLOR_GET_B(c) (((c) >>  0) & 0xFF)
-Vec4f rgb2vec4f(Color color) {
-    Vec4f vec4 = {
-        COLOR_GET_R(color) / 255.f,
-        COLOR_GET_G(color) / 255.f,
-        COLOR_GET_B(color) / 255.f,
-        COLOR_GET_A(color) / 255.f
-    };
-    return vec4;
-}
-typedef struct {
-    float x, y, z;
-} Vec3f;
-typedef struct {
-    Vec3f pos;
-    Vec4f color;
-} BatchVertex;
-static struct {
-    struct {
-        BatchVertex *items;
-        size_t len, cap;
-    } vertices;
-    struct {
-        unsigned short *items;
-        size_t len, cap;
-    } indecies;
-    unsigned int vertex_buffer, 
-                 index_buffer,
-                 vao;
-    unsigned int shader;
-} triangle_batch = { 0 };
-static void batch_flush(void) {
-    glBindVertexArray(triangle_batch.vao);
-    glUseProgram(triangle_batch.shader);
-    glBufferData(GL_ARRAY_BUFFER        , sizeof(*triangle_batch.vertices.items) * triangle_batch.vertices.len, triangle_batch.vertices.items, GL_DYNAMIC_DRAW);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(*triangle_batch.indecies.items) * triangle_batch.indecies.len, triangle_batch.indecies.items, GL_DYNAMIC_DRAW);
-    glDrawElements(GL_TRIANGLES, triangle_batch.indecies.len, GL_UNSIGNED_SHORT, 0);
-    triangle_batch.vertices.len = triangle_batch.indecies.len = 0;
-}
 static unsigned int compile_shader_kind_or_crash(const char* src, unsigned int kind) {
     unsigned int shader = glCreateShader(kind);
     glShaderSource(shader, 1, &src, NULL);
@@ -101,64 +52,110 @@ static unsigned int compile_shader_or_crash(const char* vert_src, const char* fr
     if(!success) exit(1);
     return program;
 }
-static unsigned int debug_shader = 0;
-const char* debug_shader_vert = 
-    "#version 330 core\n"
-    "layout (location = 0) in vec3 in_pos;\n"
-    "layout (location = 1) in vec4 in_color;\n"
-    "out vec4 vert_color;\n"
-    "void main() {\n"
-    "   gl_Position = vec4(in_pos.x, in_pos.y, in_pos.z, 1.0);\n"
-    "   vert_color = in_color;\n"
-    "}\n";
-const char* debug_shader_frag = 
-    "#version 330 core\n"
-    "in vec4 vert_color;\n"
-    "out vec4 out_color;\n"
-    "void main() {\n"
-    "   out_color = vert_color;\n"
-    "}\n";
-
-static unsigned int screen_width = WIDTH, screen_height = HEIGHT;
-#define vao_bind_float(loc, type, field) \
-    do { \
-        unsigned int __loc = (loc); \
-        glVertexAttribPointer(__loc, \
-                sizeof(((type*)0)->field) / sizeof(float), \
-                GL_FLOAT, \
-                GL_FALSE, \
-                sizeof(type), \
-                (void*)offsetof(type, field)); \
-        glEnableVertexAttribArray(__loc); \
-    } while(0)
-
-void debug_draw_triangle(float x0, float y0, float x1, float y1, float x2, float y2, Vec4f color) {
-    triangle_batch.shader = debug_shader;
-    unsigned short start = triangle_batch.vertices.len;
-    da_push(&triangle_batch.vertices, ((BatchVertex){ .pos = { x0 / screen_width * 2.0 - 1.0, y0 / screen_height * 2.0 - 1.0, 1.0 }, .color = color }));
-    da_push(&triangle_batch.vertices, ((BatchVertex){ .pos = { x1 / screen_width * 2.0 - 1.0, y1 / screen_height * 2.0 - 1.0, 1.0 }, .color = color }));
-    da_push(&triangle_batch.vertices, ((BatchVertex){ .pos = { x2 / screen_width * 2.0 - 1.0, y2 / screen_height * 2.0 - 1.0, 1.0 }, .color = color }));
-    for(size_t i = 0; i < 3; ++i) {
-        unsigned short idx = start + i;
-        da_push(&triangle_batch.indecies, idx);
+int create_opengl_texture_from_file(const char* path) {
+    int width, height, numChannels = 0;
+    stbi_set_flip_vertically_on_load(true);
+    unsigned char* texture_data = stbi_load(path, &width, &height, &numChannels, 4);
+    if(!texture_data) {
+        fprintf(stderr, "ERROR loading texture \"%s\": Failed to load texture\n", path);
+        return -1;
     }
+    unsigned int texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);	
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, texture_data);
+    stbi_image_free(texture_data);
+    return texture;
 }
-void debug_draw_rect(float x, float y, float w, float h, Vec4f color) {
-    triangle_batch.shader = debug_shader;
-    unsigned short start = triangle_batch.vertices.len;
-    da_push(&triangle_batch.vertices, ((BatchVertex){ .pos = { (x    ) / screen_width * 2.0 - 1.0, (y    ) / screen_height * 2.0 - 1.0, 1.0 }, .color = color }));
-    da_push(&triangle_batch.vertices, ((BatchVertex){ .pos = { (x + w) / screen_width * 2.0 - 1.0, (y    ) / screen_height * 2.0 - 1.0, 1.0 }, .color = color }));
-    da_push(&triangle_batch.vertices, ((BatchVertex){ .pos = { (x    ) / screen_width * 2.0 - 1.0, (y + h) / screen_height * 2.0 - 1.0, 1.0 }, .color = color }));
-    da_push(&triangle_batch.vertices, ((BatchVertex){ .pos = { (x + w) / screen_width * 2.0 - 1.0, (y + h) / screen_height * 2.0 - 1.0, 1.0 }, .color = color }));
-    const unsigned short indecies[] = {
+
+#define CHUNK_WIDTH  16
+#define CHUNK_HEIGHT 16
+#define STRINGIFY0(x) # x
+#define STRINGIFY1(x) STRINGIFY0(x)
+static_assert(CHUNK_WIDTH == 16 && CHUNK_HEIGHT == 16, "Update tile mask in shader");
+static unsigned int tile_shader = 0;
+#define TILE_UNIFORMS(X) \
+    X(tile_scale) \
+    X(tile_texture_width) \
+    X(chunk_tiles) \
+    X(chunk_pos)
+
+#define UNIFORM_DECLARE(name) \
+    unsigned int name;
+struct {
+TILE_UNIFORMS(UNIFORM_DECLARE);
+} tile_uniforms;
+
+#define TILE_UNIFORM_LOAD(name) \
+    tile_uniforms.name = glGetUniformLocation(tile_shader, #name);
+void load_tile_uniforms(void) {
+TILE_UNIFORMS(TILE_UNIFORM_LOAD);
+}
+typedef struct TileVertex {
+    float uv[2];
+} TileVertex;
+static unsigned int tile_vao, tile_vbo, tile_veo;
+void tile_init_buffers(void) {
+    glGenVertexArrays(1, &tile_vao);
+    glBindVertexArray(tile_vao);
+    glGenBuffers(1, &tile_veo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, tile_veo);
+    glGenBuffers(1, &tile_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, tile_vbo);
+    unsigned int loc = 0;
+    vao_bind_float(loc++, TileVertex, uv);
+    TileVertex verticies[] = {
+        0.0, 0.0,
+        1.0, 0.0,
+        0.0, 1.0,
+        1.0, 1.0
+    };
+    const unsigned char indecies[] = {
         0, 1, 3,
         0, 2, 3
     };
-    for(size_t i = 0; i < sizeof(indecies)/sizeof(*indecies); ++i) {
-        unsigned short idx = start + indecies[i];
-        da_push(&triangle_batch.indecies, idx);
-    }
+    glBufferData(GL_ARRAY_BUFFER        , sizeof(verticies), verticies, GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indecies), indecies, GL_STATIC_DRAW);
 }
+static const char* tile_vert = 
+    "#version 330 core\n"
+    "in vec2 vert_in_uv;\n"
+    "out vec2 frag_in_uv;\n"
+    "flat out uint tile_texture_id;\n"
+    "flat out float frag_tile_texture_width;\n"
+    "uniform float tile_texture_width;\n"
+    "uniform vec2 tile_scale;\n"
+    "uniform uint chunk_tiles[" STRINGIFY1(CHUNK_WIDTH*CHUNK_HEIGHT) "];\n"
+    "uniform vec2 chunk_pos;\n"
+    "void main() {\n"
+    // Unpacking the tile
+    "   uint tile = chunk_tiles[gl_InstanceID];"
+    "   uint local_x = uint((int(tile) >> 0) & 0xF);\n"
+    "   uint local_y = uint((int(tile) >> 4) & 0xF);\n"
+    "   tile_texture_id = uint((int(tile) >> 8) & 0xFFFF);\n"
+    // Passing fragment stuff
+    "   frag_in_uv = vert_in_uv;\n"
+    "   frag_tile_texture_width = tile_texture_width;\n"
+    "   vec2 xy = vec2(float(local_x), float(local_y));\n"
+    "   gl_Position = vec4((chunk_pos + ((vert_in_uv + xy) * tile_scale)) * 2.0 - 1.0, 0.0, 1.0);\n"
+    "}\n";
+static const char* tile_frag = 
+    "#version 330 core\n"
+    "in vec2 frag_in_uv;\n"
+    "flat in uint tile_texture_id;\n"
+    "flat in float frag_tile_texture_width;\n"
+    "out vec4 frag_color;\n"
+    "uniform sampler2D sampler;\n"
+    "void main() {\n"
+    "   vec2 texture_coords = vec2(\n"
+                "(float(tile_texture_id) + frag_in_uv.x) * frag_tile_texture_width,\n"
+                "frag_in_uv.y);\n"
+    "   frag_color = texture(sampler, texture_coords);\n"
+    "}\n";
 typedef struct {
     uint32_t id;
     uint32_t color;
@@ -232,7 +229,58 @@ char* shift_args(int *argc, char ***argv) {
 float exp_decayf(float a, float b, float decay, float deltaTime){
     return b + (a - b) * expf(-decay*deltaTime);
 }
+#define BAKED_MAP_WIDTH 15*3
+#define BAKED_MAP_HEIGHT 11
+static unsigned short baked_map[BAKED_MAP_WIDTH*BAKED_MAP_HEIGHT] = {
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+};
+#define CHUNK_PACK(texture, local_x, local_y) ((texture) << 8) | ((local_y) << 4) | ((local_x) << 0)
+void render_map(float camera_x, float camera_y, unsigned int atlas, unsigned short* map, size_t map_width, size_t map_height) {
+    for(size_t y = 0; y < map_height; y += CHUNK_HEIGHT) {
+        for(size_t x = 0; x < map_width; x += CHUNK_WIDTH) {
+            unsigned int chunk[CHUNK_WIDTH*CHUNK_HEIGHT];
+            unsigned int chunk_n = 0;
+            for(size_t local_y = 0; local_y < CHUNK_HEIGHT && local_y < (map_height-y); local_y++) {
+                for(size_t local_x = 0; local_x < CHUNK_WIDTH && local_x < (map_width-x); local_x++) {
+                    unsigned short tile = map[(y + local_y) * map_width + (x + local_x)];
+                    if(tile) {
+                        chunk[chunk_n++] = CHUNK_PACK(tile - 1, local_x, local_y);
+                    }
+                }
+            }
+            if(chunk_n) {
+                // TODO: unhardcode this :)
+                float tile_width = 64.f / WIDTH, 
+                      tile_height = 64.f / HEIGHT;
 
+                glUseProgram(tile_shader);
+                glBindTexture(GL_TEXTURE_2D, atlas);
+                glActiveTexture(GL_TEXTURE0);
+                glBindVertexArray(tile_vao);
+                glBindBuffer(GL_ARRAY_BUFFER, tile_vbo);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, tile_veo);
+
+                glUniform1uiv(tile_uniforms.chunk_tiles, chunk_n, chunk);
+                glUniform2f(tile_uniforms.chunk_pos, tile_width * (x) - camera_x/WIDTH, tile_height * (y) - camera_y/HEIGHT);
+                glUniform2f(tile_uniforms.tile_scale, tile_width, tile_height);
+
+                glUniform1f(tile_uniforms.tile_texture_width, 32.0/64.0);
+                // glDrawArraysInstanced(GL_TRIANGLES, 0, 6, chunk_n);
+                glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_BYTE, NULL, chunk_n);
+            }
+        }
+    }
+}
 int main(int argc, char** argv) {
     gtinit();
     shift_args(&argc, &argv);
@@ -292,22 +340,41 @@ int main(int argc, char** argv) {
                     0, 0,
                     WIDTH, HEIGHT,
                     RGFW_windowCenter | RGFW_windowNoResize | RGFW_windowOpenGL);
-    glGenVertexArrays(1, &triangle_batch.vao);
-    glBindVertexArray(triangle_batch.vao);
-    glGenBuffers(1, &triangle_batch.index_buffer);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, triangle_batch.index_buffer);
 
-    glGenBuffers(1, &triangle_batch.vertex_buffer);
-    glBindBuffer(GL_ARRAY_BUFFER, triangle_batch.vertex_buffer);
-    debug_shader = compile_shader_or_crash(debug_shader_vert, debug_shader_frag);
+    debug_draw_init();
+    tile_init_buffers();
+    debug_screen_width = WIDTH;
+    debug_screen_height = HEIGHT;
+#define SHADER(name, vert, frag) \
+    printf("Compiling %s shader...\n", # name); \
+    name##_shader = compile_shader_or_crash(vert, frag);
 
-    unsigned int loc = 0;
-    vao_bind_float(loc++, BatchVertex, pos);
-    vao_bind_float(loc++, BatchVertex, color);
+    printf("Compiling shaders...\n");
+    SHADER(debug, debug_shader_vert, debug_shader_frag);
+    SHADER(tile, tile_vert, tile_frag);
+    load_tile_uniforms();
+    printf("Compiled shaders!\n");
+
+#define TEXTURE(name, path) \
+    printf("Loading %s (%s)...\n", #name, path); \
+    name = create_opengl_texture_from_file(path); \
+    if((int)name < 0) { \
+        fprintf(stderr, "Failed to load %s\n", #name); \
+        return 1; \
+    } \
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    unsigned int map_atlas = 0;
+    printf("Loading textures...\n");
+    TEXTURE(map_atlas, "floor.png");
+    printf("Loaded textures!\n");
     da_push(&players, ((Player) { .color = color }));
 
+    // glActiveTexture(GL_TEXTURE0);
     float our_velocity_x = 0, our_velocity_y = 0;
     uint32_t now = gttime_now_unspec_milis();
+
+    float camera_x = 0, camera_y = 0;
     while (RGFW_window_shouldClose(win) == RGFW_FALSE) {
         uint32_t prev = now;
         now = gttime_now_unspec_milis();
@@ -319,21 +386,12 @@ int main(int argc, char** argv) {
         if(RGFW_isKeyDown(RGFW_right)) dx += 1;
         if(RGFW_isKeyDown(RGFW_up)) dy += 1;
         if(RGFW_isKeyDown(RGFW_down)) dy -= 1;
-        our_velocity_y += dy * 2.0;
-        our_velocity_x += dx;
-        our_velocity_x *= 0.8f;
 
         float our_old_x = players.items[0].x,
               our_old_y = players.items[0].y;
 
-        players.items[0].x += our_velocity_x;
-        players.items[0].y += our_velocity_y;
-        if(players.items[0].y < 0) {
-            players.items[0].y = 0;
-            our_velocity_y = 0.0;
-        } else {
-            our_velocity_y -= 1;
-        }
+        players.items[0].x += dx * 3000 * dt;
+        players.items[0].y += dy * 3000 * dt;
         if(fabsf(our_old_x - players.items[0].x) >= 0.0001 ||
            fabsf(our_old_y - players.items[0].y) >= 0.0001
         ) {
@@ -345,17 +403,28 @@ int main(int argc, char** argv) {
                 }
             });
         }
+        float camera_target_x = players.items[0].x + 32 - (WIDTH/2),
+              camera_target_y = players.items[0].y + 32 - (HEIGHT/2);
+        if(fabsf(camera_x - camera_target_x) <= 0.0001) {
+            camera_x = camera_target_x;
+        }
+        if(fabsf(camera_y - camera_target_y) <= 0.0001) {
+            camera_y = camera_target_y;
+        }
+        camera_x += (camera_target_x - camera_x) * 1000 * dt;
+        camera_y += (camera_target_y - camera_y) * 1000 * dt;
         glClearColor(0x21/255.f, 0x21/255.f, 0x21/255.f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+        render_map(camera_x, camera_y, map_atlas, baked_map, BAKED_MAP_WIDTH, BAKED_MAP_HEIGHT);
         for(size_t i = 1; i < players.len; ++i) { // interpolating
             Player* player = &players.items[i];
             player->x = exp_decayf(player->x, player->target_x, 1000, dt); 
             player->y = exp_decayf(player->y, player->target_y, 1000, dt); 
         }
         for(size_t i = 0; i < players.len; ++i) {
-            debug_draw_rect(players.items[i].x, players.items[i].y, 32, 32, rgb2vec4f(players.items[i].color));
+            debug_draw_rect(players.items[i].x - camera_x, players.items[i].y - camera_y, 32, 32, rgb2vec4f(players.items[i].color));
         }
-        batch_flush();
+        debug_batch_flush();
         glFlush();
         RGFW_window_swapBuffers_OpenGL(win);
         gtyield();
