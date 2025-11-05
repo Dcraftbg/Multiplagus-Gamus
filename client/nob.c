@@ -11,6 +11,7 @@ int main(int argc, char** argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
     const char* cc = getenv_or_default("CC", "cc");
     const char* bindir = getenv_or_default("BINDIR", "bin");
+    bool wayland = getenv("WAYLAND_DISPLAY");
     if(!mkdir_if_not_exists_silent(bindir)) return 1;
 
     shift_args(&argc, &argv);
@@ -18,6 +19,8 @@ int main(int argc, char** argv) {
     while(argc) {
         char* arg = shift_args(&argc, &argv);
         if(strcmp(arg, "run") == 0) run = true;
+        else if(strcmp(arg, "wayland")) wayland = true;
+        else if(strcmp(arg, "x11")) wayland = false;
         else {
             nob_log(NOB_ERROR, "Unexpected argument: %s", arg);
             return 1;
@@ -37,6 +40,21 @@ int main(int argc, char** argv) {
        )) return 1;
     da_append(&c_sources, "vendor/vendor.c");
     da_append(&c_sources, "vendor/RGFW.c");
+    if(wayland) {
+        Nob_File_Paths wayland_folder = {0}; // MEMORY leak but idc since nob lives for a short time
+        read_entire_dir("wayland/", &wayland_folder);
+        if(wayland_folder.count == 0){
+            mkdir_if_not_exists_silent("wayland/");
+            cmd.count = 0;
+            cmd_append(&cmd, "sh", "generate-wayland-protocols.sh"); // i know its a cheesy way but works
+            if(!cmd_run_sync_and_reset(&cmd)) return 1;
+            read_entire_dir("wayland/", &wayland_folder);
+        }
+        for(size_t i = 0; i < wayland_folder.count; i++){
+            String_View sv = sv_from_cstr(wayland_folder.items[i]);
+            if(sv_end_with(sv,".c")) da_append(&c_sources, temp_sprintf("wayland/%s", wayland_folder.items[i]));
+        }
+    }
     File_Paths objs = { 0 };
     String_Builder stb = { 0 };
     File_Paths pathb = { 0 };
@@ -84,6 +102,7 @@ int main(int argc, char** argv) {
             "-Ivendor", "-I../shared",
             "-DRGFWDEF=", "-DRGFW_OPENGL"
         );
+        if(wayland) cmd_append(&cmd, "-DRGFW_WAYLAND", "-Iwayland");
         if(!cmd_run_sync_and_reset(&cmd)) {  
             char* str = temp_strdup(out);  
             size_t str_len = strlen(str);  
@@ -99,7 +118,9 @@ int main(int argc, char** argv) {
         cmd_append(&cmd, cc);
         da_append_many(&cmd, objs.items, objs.count);
         cmd_append(&cmd, "-o", exe);
-        cmd_append(&cmd, "-lm","-lX11", "-lXrandr", "-lGL");
+        cmd_append(&cmd, "-lm", "-lGL");
+        if(!wayland) cmd_append(&cmd, "-lX11", "-lXrandr");
+        else cmd_append(&cmd, "-lwayland-client", "-lwayland-cursor", "-lwayland-egl", "-lxkbcommon", "-lEGL", "-ldl");
         if(!cmd_run_sync_and_reset(&cmd)) return 1;
     }
     if(run) {
