@@ -405,14 +405,14 @@ int main(int argc, char** argv) {
         }
         float camera_target_x = players.items[0].x + 32 - (WIDTH/2),
               camera_target_y = players.items[0].y + 32 - (HEIGHT/2);
+        camera_x = exp_decayf(camera_x, camera_target_x, 120.0, dt);
+        camera_y = exp_decayf(camera_y, camera_target_y, 120.0, dt);
         if(fabsf(camera_x - camera_target_x) <= 0.0001) {
             camera_x = camera_target_x;
         }
         if(fabsf(camera_y - camera_target_y) <= 0.0001) {
             camera_y = camera_target_y;
         }
-        camera_x += (camera_target_x - camera_x) * 1000 * dt;
-        camera_y += (camera_target_y - camera_y) * 1000 * dt;
         glClearColor(0x21/255.f, 0x21/255.f, 0x21/255.f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         render_map(camera_x, camera_y, map_atlas, baked_map, BAKED_MAP_WIDTH, BAKED_MAP_HEIGHT);
