@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <gt.h>
 #include <packet.h>
+#include <shared.h>
 #include <math.h>
 #include <stb_image.h>
 #include "debug_draw.h"
@@ -168,6 +169,9 @@ typedef struct {
 } Players;
 
 static Players players = { 0 };
+Player* MY_PLAYER(){
+    return &players.items[0];
+}
 int fd;
 void send_packet(const Packet* packet) {
     gtblockfd(fd, GTBLOCKOUT);
@@ -281,6 +285,11 @@ void render_map(float camera_x, float camera_y, unsigned int atlas, unsigned sho
         }
     }
 }
+
+void draw_player(Player* player, float camera_x, float camera_y){
+    debug_draw_rect(player->x - camera_x, player->y - camera_y, PLAYER_SIZE, PLAYER_SIZE, rgb2vec4f(player->color));
+}
+
 int main(int argc, char** argv) {
     gtinit();
     shift_args(&argc, &argv);
@@ -381,30 +390,32 @@ int main(int argc, char** argv) {
         float dt = (now - prev) * .0001f;
         RGFW_event event;
         while (RGFW_window_checkEvent(win, &event));
+        //LOGIC
+        Player* myPlayer = MY_PLAYER();
         int dx = 0, dy = 0;
         if(RGFW_isKeyDown(RGFW_left)) dx -= 1;
         if(RGFW_isKeyDown(RGFW_right)) dx += 1;
         if(RGFW_isKeyDown(RGFW_up)) dy += 1;
         if(RGFW_isKeyDown(RGFW_down)) dy -= 1;
 
-        float our_old_x = players.items[0].x,
-              our_old_y = players.items[0].y;
+        float our_old_x = myPlayer->x,
+              our_old_y = myPlayer->y;
 
-        players.items[0].x += dx * 3000 * dt;
-        players.items[0].y += dy * 3000 * dt;
-        if(fabsf(our_old_x - players.items[0].x) >= 0.0001 ||
-           fabsf(our_old_y - players.items[0].y) >= 0.0001
+        myPlayer->x += dx * 3000 * dt;
+        myPlayer->y += dy * 3000 * dt;
+        if(fabsf(our_old_x - myPlayer->x) >= 0.0001 ||
+           fabsf(our_old_y - myPlayer->y) >= 0.0001
         ) {
             send_packet(&(Packet) {
                 .tag = CS_PACKET_IM_HERE,
                 .as.cs_here = {
-                    .x = players.items[0].x,
-                    .y = players.items[0].y
+                    .x = myPlayer->x,
+                    .y = myPlayer->y
                 }
             });
         }
-        float camera_target_x = players.items[0].x + 32 - (WIDTH/2),
-              camera_target_y = players.items[0].y + 32 - (HEIGHT/2);
+        float camera_target_x = myPlayer->x + PLAYER_SIZE - (WIDTH/2),
+              camera_target_y = myPlayer->y + PLAYER_SIZE - (HEIGHT/2);
         camera_x = exp_decayf(camera_x, camera_target_x, 120.0, dt);
         camera_y = exp_decayf(camera_y, camera_target_y, 120.0, dt);
         if(fabsf(camera_x - camera_target_x) <= 0.0001) {
@@ -413,17 +424,16 @@ int main(int argc, char** argv) {
         if(fabsf(camera_y - camera_target_y) <= 0.0001) {
             camera_y = camera_target_y;
         }
-        glClearColor(0x21/255.f, 0x21/255.f, 0x21/255.f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        render_map(camera_x, camera_y, map_atlas, baked_map, BAKED_MAP_WIDTH, BAKED_MAP_HEIGHT);
         for(size_t i = 1; i < players.len; ++i) { // interpolating
             Player* player = &players.items[i];
             player->x = exp_decayf(player->x, player->target_x, 1000, dt); 
             player->y = exp_decayf(player->y, player->target_y, 1000, dt); 
         }
-        for(size_t i = 0; i < players.len; ++i) {
-            debug_draw_rect(players.items[i].x - camera_x, players.items[i].y - camera_y, 32, 32, rgb2vec4f(players.items[i].color));
-        }
+        // RENDERING
+        glClearColor(0x21/255.f, 0x21/255.f, 0x21/255.f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        render_map(camera_x, camera_y, map_atlas, baked_map, BAKED_MAP_WIDTH, BAKED_MAP_HEIGHT);
+        for(size_t i = 0; i < players.len; ++i) draw_player(&players.items[i], camera_x, camera_y);
         debug_batch_flush();
         glFlush();
         RGFW_window_swapBuffers_OpenGL(win);
