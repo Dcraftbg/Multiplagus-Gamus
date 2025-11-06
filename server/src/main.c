@@ -5,12 +5,16 @@
 #include "eprintf.h"
 #include <list_head.h>
 #include <packet.h>
+#include <shared.h>
+#include <shared.c>
 
 #define PORT 8080
 typedef struct {
     struct list_head list;
     int fd;
     uint32_t color;
+    bool coliding_with_someone_old;
+    bool coliding_with_someone;
     float x, y;
 } Client;
 static struct list_head clients = LIST_HEAD_INIT(clients);
@@ -84,6 +88,63 @@ void client_thread(void* client_void) {
     list_remove(&client->list);
     free(client);
 }
+
+uint32_t invert_color(uint32_t color) {
+    uint8_t a = (color >> 24) & 0xFF;
+    uint8_t r = (color >> 16) & 0xFF;
+    uint8_t g = (color >> 8) & 0xFF;
+    uint8_t b = color & 0xFF;
+    r = 255 - r;
+    g = 255 - g;
+    b = 255 - b;
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+void update(void* ninja){
+    (void)ninja;
+    for(;;){
+        list_foreach(client_list1,&clients){
+            Client* client1 = (Client*)client_list1;
+            client1->coliding_with_someone = false;
+            list_foreach(client_list2,&clients){
+                Client* client2 = (Client*)client_list2;
+                if(client1 == client2) continue;
+
+                bool collision = rects_colide(
+                    client1->x-PLAYER_SIZE/2, client1->y-PLAYER_SIZE/2,client1->x+PLAYER_SIZE/2,client1->y+PLAYER_SIZE/2,
+                    client2->x-PLAYER_SIZE/2, client2->y-PLAYER_SIZE/2,client2->x+PLAYER_SIZE/2,client2->y+PLAYER_SIZE/2
+                );
+
+                if(collision){
+                    client1->coliding_with_someone = true;
+                    client2->coliding_with_someone = true;
+                }
+            }
+
+            if(client1->coliding_with_someone && !client1->coliding_with_someone_old){
+                broadcast(client1, &(Packet){
+                    .tag = SC_PACKET_CHANGE_COLOR,
+                    .as.sc_change_color = {
+                        .id = client1->fd,
+                        .color = invert_color(client1->color)
+                    }
+                });
+            }else if(!client1->coliding_with_someone && client1->coliding_with_someone_old){
+                broadcast(client1, &(Packet){
+                    .tag = SC_PACKET_CHANGE_COLOR,
+                    .as.sc_change_color = {
+                        .id = client1->fd,
+                        .color = client1->color
+                    }
+                });
+            }
+
+            if(client1->coliding_with_someone_old != client1->coliding_with_someone) client1->coliding_with_someone_old = client1->coliding_with_someone;
+        }
+        gtsleep(60);
+    }
+}
+
 int main(void) {
     gtinit();
     int server = socket(AF_INET, SOCK_STREAM, 0);
@@ -111,7 +172,7 @@ int main(void) {
         return 1;
     }
     eprintfln("INFO: Listening on port 0.0.0.0:%d", PORT);
-
+    gtgo(update, NULL);
     for(;;) {
         Client* client = malloc(sizeof(Client));
         if(!client) {

@@ -18,6 +18,10 @@ typedef struct ScSomeoneHere {
 typedef struct ScSomeoneLeft {
     uint32_t id;
 } ScSomeoneLeft;
+typedef struct ScChangeColor {
+    uint32_t id;
+    uint32_t color;
+} ScChangeColor;
 enum {
     CS_PACKET_HELLO,
     CS_PACKET_IM_HERE,
@@ -27,6 +31,7 @@ enum {
     SC_PACKET_SOMEONE_JOINED,
     SC_PACKET_SOMEONE_HERE,
     SC_PACKET_SOMEONE_LEFT,
+    SC_PACKET_CHANGE_COLOR,
     SC_PACKET_COUNT
 };
 typedef struct Packet {
@@ -37,5 +42,6 @@ typedef struct Packet {
         ScSomeoneJoined sc_joined;
         ScSomeoneHere sc_here;
         ScSomeoneLeft sc_left;
+        ScChangeColor sc_change_color;
     } as;
 } Packet;

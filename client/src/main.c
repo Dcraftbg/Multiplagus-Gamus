@@ -7,6 +7,7 @@
 #include <gt.h>
 #include <packet.h>
 #include <shared.h>
+#include <shared.c>
 #include <math.h>
 #include <stb_image.h>
 #include "debug_draw.h"
@@ -190,6 +191,10 @@ void net_thread(void* ninja) {
         gtblockfd(fd, GTBLOCKIN);
         recv(fd, &packet, sizeof(packet), 0);
         switch(packet.tag) {
+        case SC_PACKET_CHANGE_COLOR: {
+            size_t player_idx = lookup_player_idx(packet.as.sc_change_color.id);
+            if(player_idx) players.items[player_idx].color = packet.as.sc_change_color.color;
+        } break;
         case SC_PACKET_SOMEONE_JOINED: {
             fprintf(stderr, "Someone joined %d!\n", packet.as.sc_joined.id);
             Player player = {
@@ -235,18 +240,19 @@ float exp_decayf(float a, float b, float decay, float deltaTime){
 }
 #define BAKED_MAP_WIDTH 15*3
 #define BAKED_MAP_HEIGHT 11
+//Keep in mind y is flipped because of opengl y+ up instead of y+ down so yeah this baked map is flipped on y
 static unsigned short baked_map[BAKED_MAP_WIDTH*BAKED_MAP_HEIGHT] = {
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
     2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
     2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
     2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
     2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
     2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
     2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
     2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
     2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
-    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2
 };
 #define CHUNK_PACK(texture, local_x, local_y) ((texture) << 8) | ((local_y) << 4) | ((local_x) << 0)
 void render_map(float camera_x, float camera_y, unsigned int atlas, unsigned short* map, size_t map_width, size_t map_height) {
@@ -384,6 +390,20 @@ int main(int argc, char** argv) {
     uint32_t now = gttime_now_unspec_milis();
 
     float camera_x = 0, camera_y = 0;
+
+    // ==========================================================
+    // sending initial pos can be changed later if stinks to much
+    MY_PLAYER()->x = 200;
+    MY_PLAYER()->y = 200;
+    send_packet(&(Packet) {
+            .tag = CS_PACKET_IM_HERE,
+            .as.cs_here = {
+                .x = MY_PLAYER()->x,
+                .y = MY_PLAYER()->y
+            }
+    });
+    // ==========================================================
+
     while (RGFW_window_shouldClose(win) == RGFW_FALSE) {
         uint32_t prev = now;
         now = gttime_now_unspec_milis();
@@ -401,8 +421,34 @@ int main(int argc, char** argv) {
         float our_old_x = myPlayer->x,
               our_old_y = myPlayer->y;
 
-        myPlayer->x += dx * 3000 * dt;
-        myPlayer->y += dy * 3000 * dt;
+        float acc_x = dx * 3000 * dt;
+        float acc_y = dy * 3000 * dt;
+
+        for(size_t y = 0; y < BAKED_MAP_HEIGHT; y++){
+            for(size_t x = 0; x < BAKED_MAP_WIDTH; x++){
+                unsigned short tile = baked_map[y*BAKED_MAP_WIDTH + x];
+                if(tile != 2) continue;
+                float tile_x = x*64; // 64 is tile size
+                float tile_y = y*64;
+                //horizontal collision
+                float player_x = myPlayer->x+acc_x;
+                float player_y = myPlayer->y;
+                if(rects_colide(
+                    player_x, player_y, player_x + PLAYER_SIZE, player_y + PLAYER_SIZE,
+                    tile_x, tile_y, tile_x + 64, tile_y + 64
+                )) acc_x = 0;
+                //vertical collision
+                player_x = myPlayer->x;
+                player_y = myPlayer->y+acc_y;
+                if(rects_colide(
+                    player_x, player_y, player_x + PLAYER_SIZE, player_y + PLAYER_SIZE,
+                    tile_x, tile_y, tile_x + 64, tile_y + 64
+                )) acc_y = 0;
+            }
+        }
+
+        myPlayer->x += acc_x;
+        myPlayer->y += acc_y;
         if(fabsf(our_old_x - myPlayer->x) >= 0.0001 ||
            fabsf(our_old_y - myPlayer->y) >= 0.0001
         ) {
