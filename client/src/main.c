@@ -349,6 +349,7 @@ int main(int argc, char** argv) {
             .color = color,
         }
     });
+    da_push(&players, ((Player) { .color = color }));
     gtgo(net_thread, NULL);
     RGFW_window* win = RGFW_createWindow(
                     "Client",
@@ -383,7 +384,6 @@ int main(int argc, char** argv) {
     printf("Loading textures...\n");
     TEXTURE(map_atlas, "floor.png");
     printf("Loaded textures!\n");
-    da_push(&players, ((Player) { .color = color }));
 
     // glActiveTexture(GL_TEXTURE0);
     float our_velocity_x = 0, our_velocity_y = 0;
