@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
        )) return 1;
     da_append(&c_sources, "vendor/vendor_networking.c");
     da_append(&c_sources, "vendor/RGFW.c");
+    da_append(&c_sources, "vendor/stb_truetype.c");
     if(wayland) {
         Nob_File_Paths wayland_folder = {0}; // MEMORY leak but idc since nob lives for a short time
         read_entire_dir("wayland/", &wayland_folder);
