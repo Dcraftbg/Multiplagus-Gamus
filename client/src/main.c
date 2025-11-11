@@ -163,6 +163,8 @@ typedef struct {
     uint32_t color;
     float target_x, target_y;
     float x, y;
+    uint32_t player_state;
+    bool ready;
 } Player;
 typedef struct {
     Player* items;
@@ -170,6 +172,9 @@ typedef struct {
 } Players;
 
 static Players players = { 0 };
+static uint32_t game_state = GAME_STATE_LOBBY;
+static float timer = 0;
+static float initial_timer = 0;
 Player* MY_PLAYER(){
     return &players.items[0];
 }
@@ -184,17 +189,19 @@ size_t lookup_player_idx(uint32_t id) {
     }
     return 0;
 }
+
+bool app_running = true;
 void net_thread(void* ninja) {
     (void)ninja;
     for(;;) {
         Packet packet = { 0 };
         gtblockfd(fd, GTBLOCKIN);
-        recv(fd, &packet, sizeof(packet), 0);
+        int n = recv(fd, &packet, sizeof(packet), 0);
+        if(n <= 0) {
+            app_running = false;
+            break;
+        }
         switch(packet.tag) {
-        case SC_PACKET_CHANGE_COLOR: {
-            size_t player_idx = lookup_player_idx(packet.as.sc_change_color.id);
-            if(player_idx) players.items[player_idx].color = packet.as.sc_change_color.color;
-        } break;
         case SC_PACKET_SOMEONE_JOINED: {
             fprintf(stderr, "Someone joined %d!\n", packet.as.sc_joined.id);
             Player player = {
@@ -223,6 +230,33 @@ void net_thread(void* ninja) {
             else {
                 fprintf(stderr, "Bogus left %d!\n", packet.as.sc_left.id);
             }
+        } break;
+        case SC_PACKET_CHANGE_GAME_STATE: {
+            game_state = packet.as.sc_change_game_state.game_state;
+            if(game_state == GAME_STATE_LOBBY){ //TODO: move it elsewhere
+                for(size_t i = 0; i < players.len; i++){
+                    players.items[i].ready = false;
+                }
+            }
+        } break;
+        case SC_PACKET_TELEPORT_HERE: {
+            MY_PLAYER()->x = packet.as.sc_teleport_here.x;
+            MY_PLAYER()->y = packet.as.sc_teleport_here.y;
+        } break;
+        case SC_PACKET_CHANGE_YOUR_STATE: {
+            MY_PLAYER()->player_state = packet.as.sc_change_your_state.player_state;
+        } break;
+        case SC_PACKET_CHANGE_SOMEONES_STATE: {
+            size_t idx = lookup_player_idx(packet.as.sc_left.id);
+            if(idx) players.items[idx].player_state = packet.as.sc_change_someones_state.player_state;
+        } break;
+        case SC_PACKET_SET_TIMER: {
+            timer = packet.as.sc_set_timer.duration;
+            initial_timer = timer;
+        } break;
+        case SC_PACKET_SOMEONES_READY: {
+            size_t idx = lookup_player_idx(packet.as.sc_someones_ready.id);
+            if(idx) players.items[idx].ready = true;
         } break;
         default:
             fprintf(stderr, "Bogus packet!\n");
@@ -292,8 +326,150 @@ void render_map(float camera_x, float camera_y, unsigned int atlas, unsigned sho
     }
 }
 
-void draw_player(Player* player, float camera_x, float camera_y){
-    debug_draw_rect(player->x - camera_x, player->y - camera_y, PLAYER_SIZE, PLAYER_SIZE, rgb2vec4f(player->color));
+void draw_player(float x, float y, float size, Vec4f color, bool zombie){
+    debug_draw_rect(x, y, size, size, color);
+    if(zombie) debug_draw_rect(x + size/10, y + size/10, size - size/10*2, size  - size/10*2, rgb2vec4f(0xFF000000));
+}
+
+float camera_x = 0, camera_y = 0;
+void update_game_match(float dt){
+    Player* myPlayer = MY_PLAYER();
+    int dx = 0, dy = 0;
+    if(RGFW_isKeyDown(RGFW_left)) dx -= 1;
+    if(RGFW_isKeyDown(RGFW_right)) dx += 1;
+    if(RGFW_isKeyDown(RGFW_up)) dy += 1;
+    if(RGFW_isKeyDown(RGFW_down)) dy -= 1;
+
+    float our_old_x = myPlayer->x,
+            our_old_y = myPlayer->y;
+
+    float acc_x = dx * 3000 * dt;
+    float acc_y = dy * 3000 * dt;
+
+    if(myPlayer->player_state != PLAYER_STATE_SPECTATOR){
+        for(size_t y = 0; y < BAKED_MAP_HEIGHT; y++){
+            for(size_t x = 0; x < BAKED_MAP_WIDTH; x++){
+                unsigned short tile = baked_map[y*BAKED_MAP_WIDTH + x];
+                if(tile != 2) continue;
+                float tile_x = x*64; // 64 is tile size
+                float tile_y = y*64;
+                //horizontal collision
+                float player_x = myPlayer->x+acc_x;
+                float player_y = myPlayer->y;
+                if(rects_colide(
+                    player_x, player_y, player_x + PLAYER_SIZE, player_y + PLAYER_SIZE,
+                    tile_x, tile_y, tile_x + 64, tile_y + 64
+                )) acc_x = 0;
+                //vertical collision
+                player_x = myPlayer->x;
+                player_y = myPlayer->y+acc_y;
+                if(rects_colide(
+                    player_x, player_y, player_x + PLAYER_SIZE, player_y + PLAYER_SIZE,
+                    tile_x, tile_y, tile_x + 64, tile_y + 64
+                )) acc_y = 0;
+            }
+        }
+    }
+
+    myPlayer->x += acc_x;
+    myPlayer->y += acc_y;
+    if(fabsf(our_old_x - myPlayer->x) >= 0.0001 ||
+        fabsf(our_old_y - myPlayer->y) >= 0.0001
+    ) {
+        send_packet(&(Packet) {
+            .tag = CS_PACKET_IM_HERE,
+            .as.cs_here = {
+                .x = myPlayer->x,
+                .y = myPlayer->y
+            }
+        });
+    }
+    float camera_target_x = myPlayer->x + PLAYER_SIZE - (WIDTH/2),
+            camera_target_y = myPlayer->y + PLAYER_SIZE - (HEIGHT/2);
+    camera_x = exp_decayf(camera_x, camera_target_x, 120.0, dt);
+    camera_y = exp_decayf(camera_y, camera_target_y, 120.0, dt);
+    if(fabsf(camera_x - camera_target_x) <= 0.0001) {
+        camera_x = camera_target_x;
+    }
+    if(fabsf(camera_y - camera_target_y) <= 0.0001) {
+        camera_y = camera_target_y;
+    }
+    for(size_t i = 1; i < players.len; ++i) { // interpolating
+        Player* player = &players.items[i];
+        player->x = exp_decayf(player->x, player->target_x, 1000, dt); 
+        player->y = exp_decayf(player->y, player->target_y, 1000, dt); 
+    }
+
+    if(timer >= 0) timer -= dt;
+}
+
+unsigned int map_atlas = 0;
+void render_game_match(){
+    glClearColor(0x21/255.f, 0x21/255.f, 0x21/255.f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    render_map(camera_x, camera_y, map_atlas, baked_map, BAKED_MAP_WIDTH, BAKED_MAP_HEIGHT);
+    for(size_t i = 0; i < players.len; ++i) {
+        Player* player = &players.items[i];
+        if(player->player_state == PLAYER_STATE_SPECTATOR) continue;
+        draw_player(player->x - camera_x, player->y - camera_y, PLAYER_SIZE, rgb2vec4f(player->color), player->player_state == PLAYER_STATE_ZOMBIE);
+    }
+
+    //rendering timer
+    if(timer > 0) debug_draw_rect(0,0,(float)debug_screen_width*(timer/initial_timer), 32, rgb2vec4f(0xFF882222));
+}
+
+void update_lobby(float dt){
+    (void)dt;
+
+    if(RGFW_isKeyDown(RGFW_space)) {
+        MY_PLAYER()->ready = true;
+        send_packet(&(Packet){
+            .tag = CS_PACKET_READY,
+        });
+    }
+}
+
+void render_lobby(){
+    glClearColor(0x21/255.f, 0x21/255.f, 0x55/255.f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    float S = debug_screen_width / 100;
+    float players_container_height = debug_screen_height / 4;
+    float players_container_width = debug_screen_width - 2*S;
+    float players_container_x = S;
+    float players_container_y = debug_screen_height/2-players_container_height/2;
+    debug_draw_rect(players_container_x, 
+                    players_container_y,
+                    players_container_width,
+                    players_container_height, 
+                    rgb2vec4f(0xFF252565));
+    
+    for(size_t i = 0; i < players.len; ++i) {
+        float player_rect_size = players_container_height;
+        
+        float container_width = players_container_width/players.len;
+        float player_rect_x = players_container_x + container_width*i + container_width/2 - player_rect_size/2;
+        float player_rect_y = players_container_y;
+
+        Player* player = &players.items[i];
+        draw_player(
+            player_rect_x,
+            player_rect_y,
+            player_rect_size,
+            rgb2vec4f(player->color),
+            false
+        );
+        if(player->ready){
+            float ready_mark_size = player_rect_size / 4;
+            float ready_mark_x = player_rect_x + player_rect_size/2 - ready_mark_size/2;
+            float ready_mark_y = player_rect_y - ready_mark_size - S;
+            debug_draw_rect(
+                ready_mark_x, 
+                ready_mark_y,
+                ready_mark_size, 
+                ready_mark_size, 
+                rgb2vec4f(0xFF00FF00));
+        }
+    }
 }
 
 int main(int argc, char** argv) {
@@ -380,16 +556,12 @@ int main(int argc, char** argv) {
     } \
     glGenerateMipmap(GL_TEXTURE_2D);
 
-    unsigned int map_atlas = 0;
     printf("Loading textures...\n");
     TEXTURE(map_atlas, "floor.png");
     printf("Loaded textures!\n");
 
     // glActiveTexture(GL_TEXTURE0);
-    float our_velocity_x = 0, our_velocity_y = 0;
     uint32_t now = gttime_now_unspec_milis();
-
-    float camera_x = 0, camera_y = 0;
 
     // ==========================================================
     // sending initial pos can be changed later if stinks to much
@@ -404,82 +576,35 @@ int main(int argc, char** argv) {
     });
     // ==========================================================
 
-    while (RGFW_window_shouldClose(win) == RGFW_FALSE) {
+    while (RGFW_window_shouldClose(win) == RGFW_FALSE && app_running == true) {
         uint32_t prev = now;
         now = gttime_now_unspec_milis();
         float dt = (now - prev) * .0001f;
         RGFW_event event;
         while (RGFW_window_checkEvent(win, &event));
         //LOGIC
-        Player* myPlayer = MY_PLAYER();
-        int dx = 0, dy = 0;
-        if(RGFW_isKeyDown(RGFW_left)) dx -= 1;
-        if(RGFW_isKeyDown(RGFW_right)) dx += 1;
-        if(RGFW_isKeyDown(RGFW_up)) dy += 1;
-        if(RGFW_isKeyDown(RGFW_down)) dy -= 1;
-
-        float our_old_x = myPlayer->x,
-              our_old_y = myPlayer->y;
-
-        float acc_x = dx * 3000 * dt;
-        float acc_y = dy * 3000 * dt;
-
-        for(size_t y = 0; y < BAKED_MAP_HEIGHT; y++){
-            for(size_t x = 0; x < BAKED_MAP_WIDTH; x++){
-                unsigned short tile = baked_map[y*BAKED_MAP_WIDTH + x];
-                if(tile != 2) continue;
-                float tile_x = x*64; // 64 is tile size
-                float tile_y = y*64;
-                //horizontal collision
-                float player_x = myPlayer->x+acc_x;
-                float player_y = myPlayer->y;
-                if(rects_colide(
-                    player_x, player_y, player_x + PLAYER_SIZE, player_y + PLAYER_SIZE,
-                    tile_x, tile_y, tile_x + 64, tile_y + 64
-                )) acc_x = 0;
-                //vertical collision
-                player_x = myPlayer->x;
-                player_y = myPlayer->y+acc_y;
-                if(rects_colide(
-                    player_x, player_y, player_x + PLAYER_SIZE, player_y + PLAYER_SIZE,
-                    tile_x, tile_y, tile_x + 64, tile_y + 64
-                )) acc_y = 0;
-            }
-        }
-
-        myPlayer->x += acc_x;
-        myPlayer->y += acc_y;
-        if(fabsf(our_old_x - myPlayer->x) >= 0.0001 ||
-           fabsf(our_old_y - myPlayer->y) >= 0.0001
-        ) {
-            send_packet(&(Packet) {
-                .tag = CS_PACKET_IM_HERE,
-                .as.cs_here = {
-                    .x = myPlayer->x,
-                    .y = myPlayer->y
-                }
-            });
-        }
-        float camera_target_x = myPlayer->x + PLAYER_SIZE - (WIDTH/2),
-              camera_target_y = myPlayer->y + PLAYER_SIZE - (HEIGHT/2);
-        camera_x = exp_decayf(camera_x, camera_target_x, 120.0, dt);
-        camera_y = exp_decayf(camera_y, camera_target_y, 120.0, dt);
-        if(fabsf(camera_x - camera_target_x) <= 0.0001) {
-            camera_x = camera_target_x;
-        }
-        if(fabsf(camera_y - camera_target_y) <= 0.0001) {
-            camera_y = camera_target_y;
-        }
-        for(size_t i = 1; i < players.len; ++i) { // interpolating
-            Player* player = &players.items[i];
-            player->x = exp_decayf(player->x, player->target_x, 1000, dt); 
-            player->y = exp_decayf(player->y, player->target_y, 1000, dt); 
+        switch(game_state){
+            case GAME_STATE_MATCH: { 
+                update_game_match(dt);
+            } break;
+            case GAME_STATE_LOBBY: {
+                update_lobby(dt);
+            } break;
+            default: {} break;
         }
         // RENDERING
-        glClearColor(0x21/255.f, 0x21/255.f, 0x21/255.f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        render_map(camera_x, camera_y, map_atlas, baked_map, BAKED_MAP_WIDTH, BAKED_MAP_HEIGHT);
-        for(size_t i = 0; i < players.len; ++i) draw_player(&players.items[i], camera_x, camera_y);
+        switch(game_state){
+            case GAME_STATE_MATCH: {
+                render_game_match();
+            } break;
+            case GAME_STATE_LOBBY: {
+                render_lobby();
+            } break;
+            default: {
+                glClearColor(0xFF/255.f, 0x21/255.f, 0x21/255.f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+            } break;
+        }
         debug_batch_flush();
         glFlush();
         RGFW_window_swapBuffers_OpenGL(win);
